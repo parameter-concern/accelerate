@@ -89,4 +89,4 @@ setup(
 #      twine upload dist/* -r pypi
 # 8. Add release notes to the tag in github once everything is looking hunky-dory.
 # 9. Add the release version to docs/source/_static/js/custom.js and .github/deploy_doc.sh
-# 10. Update the version in __init__.py, setup.py to the new version "-dev" and push to master
+# 10. Update the version in __init__.py, setup.py to the new version "-dev" and push to main
