@@ -24,7 +24,10 @@ from ast import literal_eval
 from pathlib import Path
 from typing import Dict, List
 
-from accelerate.commands.config import default_config_file, load_config_from_file
+from accelerate.commands.config import (
+    default_config_file,
+    load_config_from_file,
+)
 from accelerate.commands.config.config_args import SageMakerConfig
 from accelerate.state import ComputeEnvironment, DistributedType
 from accelerate.utils import PrepareForLaunch, is_sagemaker_available
@@ -37,7 +40,9 @@ def launch_command_parser(subparsers=None):
         parser = argparse.ArgumentParser("Accelerate launch command")
 
     parser.add_argument(
-        "--config_file", default=None, help="The config file to use for the default values in the launching script."
+        "--config_file",
+        default=None,
+        help="The config file to use for the default values in the launching script.",
     )
     parser.add_argument(
         "--multi_gpu",
@@ -52,7 +57,10 @@ def launch_command_parser(subparsers=None):
         help="Whether to use deepspeed.",
     )
     parser.add_argument(
-        "--tpu", default=False, action="store_true", help="Whether or not this should launch a TPU training."
+        "--tpu",
+        default=False,
+        action="store_true",
+        help="Whether or not this should launch a TPU training.",
     )
     parser.add_argument(
         "--mixed_precision",
@@ -65,26 +73,57 @@ def launch_command_parser(subparsers=None):
     )
 
     parser.add_argument(
-        "--fp16", default=False, action="store_true", help="Whether or not to use mixed precision training."
+        "--fp16",
+        default=False,
+        action="store_true",
+        help="Whether or not to use mixed precision training.",
     )
     parser.add_argument(
-        "--cpu", default=False, action="store_true", help="Whether or not to force the training on the CPU."
+        "--cpu",
+        default=False,
+        action="store_true",
+        help="Whether or not to force the training on the CPU.",
     )
     parser.add_argument(
-        "--num_processes", type=int, default=None, help="The total number of processes to be launched in parallel."
+        "--num_processes",
+        type=int,
+        default=None,
+        help="The total number of processes to be launched in parallel.",
     )
     parser.add_argument(
-        "--num_machines", type=int, default=None, help="The total number of machines used in this training."
+        "--num_machines",
+        type=int,
+        default=None,
+        help="The total number of machines used in this training.",
     )
     parser.add_argument(
-        "--machine_rank", type=int, default=None, help="The rank of the machine on which this script is launched."
+        "--machine_rank",
+        type=int,
+        default=None,
+        help="The rank of the machine on which this script is launched.",
     )
-    parser.add_argument("--main_process_ip", type=str, default=None, help="The IP address of the machine of rank 0.")
+    parser.add_argument(
+        "--main_process_ip",
+        type=str,
+        default=None,
+        help="The IP address of the machine of rank 0.",
+    )
     parser.add_argument(
         "--main_process_port",
         type=int,
         default=None,
         help="The port to use to communicate with the machine of rank 0.",
+    )
+    parser.add_argument(
+        "-m",
+        "--module",
+        action="store_true",
+        help="Change each process to interpret the launch script as a Python module, executing with the same behavior as 'python -m'.",
+    )
+    parser.add_argument(
+        "--no_python",
+        action="store_true",
+        help="Skip prepending the training script with 'python' - just execute it directly. Useful when the script is not a Python script.",
     )
     parser.add_argument(
         "--main_training_function",
@@ -132,7 +171,11 @@ def launch_command_parser(subparsers=None):
     )
 
     # Other arguments of the training scripts
-    parser.add_argument("training_script_args", nargs=argparse.REMAINDER, help="Arguments of the training script.")
+    parser.add_argument(
+        "training_script_args",
+        nargs=argparse.REMAINDER,
+        help="Arguments of the training script.",
+    )
 
     if subparsers is not None:
         parser.set_defaults(func=launch_command)
@@ -140,7 +183,15 @@ def launch_command_parser(subparsers=None):
 
 
 def simple_launcher(args):
-    cmd = [sys.executable, args.training_script]
+    """Run with CPU-only or single GPU setup."""
+    cmd = []
+    if args.no_python and args.module:
+        raise ValueError("--module and --no_python cannot be used together")
+    if not args.no_python:
+        cmd.append(sys.executable)
+        if args.module:
+            cmd.append("-m")
+    cmd.append(args.training_script)
     cmd.extend(args.training_script_args)
 
     current_env = os.environ.copy()
@@ -148,10 +199,15 @@ def simple_launcher(args):
 
     mixed_precision = args.mixed_precision.lower()
     if mixed_precision not in ["no", "fp16", "bf16"]:
-        raise ValueError(f"Unknown mixed_precision mode: {mixed_precision}. Choose between 'no', 'fp16' and 'bf16'.")
+        raise ValueError(
+            f"Unknown mixed_precision mode: {mixed_precision}. Choose between 'no', 'fp16' and 'bf16'."
+        )
 
     if args.fp16:
-        warnings.warn('--fp16 flag is deprecated. Use "--mixed_precision fp16" instead.', DeprecationWarning)
+        warnings.warn(
+            '--fp16 flag is deprecated. Use "--mixed_precision fp16" instead.',
+            DeprecationWarning,
+        )
         mixed_precision = "fp16"
 
     current_env["MIXED_PRECISION"] = str(mixed_precision)
@@ -159,12 +215,14 @@ def simple_launcher(args):
     process = subprocess.Popen(cmd, env=current_env)
     process.wait()
     if process.returncode != 0:
-        raise subprocess.CalledProcessError(returncode=process.returncode, cmd=cmd)
+        raise subprocess.CalledProcessError(
+            returncode=process.returncode, cmd=cmd
+        )
 
 
 def multi_gpu_launcher(args):
     cmd = [sys.executable, "-m", "torch.distributed.launch"]
-    cmd.extend(["--use_env"])
+    cmd.append("--use_env")
     if args.num_machines > 1:
         cmd.extend(
             [
@@ -184,6 +242,14 @@ def multi_gpu_launcher(args):
         cmd.extend(["--nproc_per_node", str(args.num_processes)])
         if args.main_process_port is not None:
             cmd.extend(["--master_port", str(args.main_process_port)])
+
+    if args.module and args.no_python:
+        raise ValueError("--module and --no_python cannot be used together")
+    if args.module:
+        cmd.append("--module")
+    if args.no_python:
+        cmd.append("--no_python")
+
     cmd.append(args.training_script)
     cmd.extend(args.training_script_args)
 
@@ -191,10 +257,15 @@ def multi_gpu_launcher(args):
     mixed_precision = args.mixed_precision.lower()
 
     if mixed_precision not in ["no", "fp16", "bf16"]:
-        raise ValueError(f"Unknown mixed_precision mode: {mixed_precision}. Choose between 'no', 'fp16' and 'bf16'.")
+        raise ValueError(
+            f"Unknown mixed_precision mode: {mixed_precision}. Choose between 'no', 'fp16' and 'bf16'."
+        )
 
     if args.fp16:
-        warnings.warn('--fp16 flag is deprecated. Use "--mixed_precision fp16" instead.', DeprecationWarning)
+        warnings.warn(
+            '--fp16 flag is deprecated. Use "--mixed_precision fp16" instead.',
+            DeprecationWarning,
+        )
         mixed_precision = "fp16"
 
     current_env["MIXED_PRECISION"] = str(mixed_precision)
@@ -202,7 +273,9 @@ def multi_gpu_launcher(args):
     process = subprocess.Popen(cmd, env=current_env)
     process.wait()
     if process.returncode != 0:
-        raise subprocess.CalledProcessError(returncode=process.returncode, cmd=cmd)
+        raise subprocess.CalledProcessError(
+            returncode=process.returncode, cmd=cmd
+        )
 
 
 def deepspeed_launcher(args):
@@ -226,6 +299,12 @@ def deepspeed_launcher(args):
     else:
         cmd.extend(["--num_gpus", str(args.num_processes)])
 
+    if args.module and args.no_python:
+        raise ValueError("--module and --no_python cannot be used together")
+    if args.module:
+        cmd.append("--module")
+    if args.no_python:
+        cmd.append("--no_python")
     cmd.append(args.training_script)
     cmd.extend(args.training_script_args)
 
@@ -233,32 +312,51 @@ def deepspeed_launcher(args):
     mixed_precision = args.mixed_precision.lower()
 
     if mixed_precision not in ["no", "fp16", "bf16"]:
-        raise ValueError(f"Unknown mixed_precision mode: {mixed_precision}. Choose between 'no', 'fp16' and 'bf16'.")
+        raise ValueError(
+            f"Unknown mixed_precision mode: {mixed_precision}. Choose between 'no', 'fp16' and 'bf16'."
+        )
 
     if args.fp16:
-        warnings.warn('--fp16 flag is deprecated. Use "--mixed_precision fp16" instead.', DeprecationWarning)
+        warnings.warn(
+            '--fp16 flag is deprecated. Use "--mixed_precision fp16" instead.',
+            DeprecationWarning,
+        )
         mixed_precision = "fp16"
 
     current_env["MIXED_PRECISION"] = str(mixed_precision)
     current_env["USE_DEEPSPEED"] = "true"
     current_env["DEEPSPEED_ZERO_STAGE"] = str(args.zero_stage)
-    current_env["GRADIENT_ACCUMULATION_STEPS"] = str(args.gradient_accumulation_steps)
-    current_env["DEEPSPEED_OFFLOAD_OPTIMIZER_DEVICE"] = str(args.offload_optimizer_device)
+    current_env["GRADIENT_ACCUMULATION_STEPS"] = str(
+        args.gradient_accumulation_steps
+    )
+    current_env["DEEPSPEED_OFFLOAD_OPTIMIZER_DEVICE"] = str(
+        args.offload_optimizer_device
+    )
 
     process = subprocess.Popen(cmd, env=current_env)
     process.wait()
     if process.returncode != 0:
-        raise subprocess.CalledProcessError(returncode=process.returncode, cmd=cmd)
+        raise subprocess.CalledProcessError(
+            returncode=process.returncode, cmd=cmd
+        )
 
 
 def tpu_launcher(args):
     import torch_xla.distributed.xla_multiprocessing as xmp
 
-    # Import training_script as a module.
-    script_path = Path(args.training_script)
-    sys.path.append(str(script_path.parent.resolve()))
-    mod_name = script_path.stem
-    mod = importlib.import_module(mod_name)
+    if args.no_python:
+        raise ValueError("--no_python cannot be used with TPU launcher")
+
+    if args.module:
+        mod = importlib.import_module(args.training_script)
+        sys.argv = [mod.__file__] + args.training_script_args
+    else:
+        # Import training_script .py file as a module and patch sys.argv
+        script_path = Path(args.training_script)
+        sys.path.append(str(script_path.parent.resolve()))
+        mod_name = script_path.stem
+        mod = importlib.import_module(mod_name)
+        sys.argv = [args.training_script] + args.training_script_args
     if not hasattr(mod, args.main_training_function):
         raise ValueError(
             f"Your training script should have a function named {args.main_training_function}, or you should pass a "
@@ -266,10 +364,9 @@ def tpu_launcher(args):
         )
     main_function = getattr(mod, args.main_training_function)
 
-    # Patch sys.argv
-    sys.argv = [args.training_script] + args.training_script_args
-
-    xmp.spawn(PrepareForLaunch(main_function), args=(), nprocs=args.num_processes)
+    xmp.spawn(
+        PrepareForLaunch(main_function), args=(), nprocs=args.num_processes
+    )
 
 
 def _convert_nargs_to_dict(nargs: List[str]) -> Dict[str, str]:
@@ -292,8 +389,12 @@ def _convert_nargs_to_dict(nargs: List[str]) -> Dict[str, str]:
     for index, argument in enumerate(unknown):
         if argument.startswith(("-", "--")):
             action = None
-            if index + 1 < len(unknown):  # checks if next index would be in list
-                if unknown[index + 1].startswith(("-", "--")):  # checks if next element is an key
+            if index + 1 < len(
+                unknown
+            ):  # checks if next index would be in list
+                if unknown[index + 1].startswith(
+                    ("-", "--")
+                ):  # checks if next element is an key
                     # raise an error if element is store_true or store_false
                     raise ValueError(
                         "SageMaker doesn’t support argparse actions for `store_true` or `store_false`. Please define explicit types"
@@ -309,7 +410,11 @@ def _convert_nargs_to_dict(nargs: List[str]) -> Dict[str, str]:
                 parser.add_argument(argument, action=action)
 
     return {
-        key: (literal_eval(value) if value == "True" or value == "False" else value)
+        key: (
+            literal_eval(value)
+            if value == "True" or value == "False"
+            else value
+        )
         for key, value in parser.parse_args(nargs).__dict__.items()
     }
 
@@ -319,6 +424,8 @@ def sagemaker_launcher(sagemaker_config: SageMakerConfig, args):
         raise ImportError(
             "Please install sagemaker to be able to launch training on Amazon SageMaker with `pip install accelerate[sagemaker]`"
         )
+    if args.module or args.no_python:
+        raise ValueError("SageMaker requires a python training script file")
     from sagemaker.huggingface import HuggingFace
 
     # configure environment
@@ -328,7 +435,10 @@ def sagemaker_launcher(sagemaker_config: SageMakerConfig, args):
     # configure credentials
     if sagemaker_config.profile is not None:
         os.environ["AWS_PROFILE"] = sagemaker_config.profile
-    elif args.aws_access_key_id is not None and args.aws_secret_access_key is not None:
+    elif (
+        args.aws_access_key_id is not None
+        and args.aws_secret_access_key is not None
+    ):
         os.environ["AWS_ACCESS_KEY_ID"] = args.aws_access_key_id
         os.environ["AWS_SECRET_ACCESS_KEY"] = args.aws_secret_access_key
     else:
@@ -342,7 +452,9 @@ def sagemaker_launcher(sagemaker_config: SageMakerConfig, args):
         source_dir = "."
     entry_point = os.path.basename(args.training_script)
     if not entry_point.endswith(".py"):
-        raise ValueError(f'Your training script should be a python script and not "{entry_point}"')
+        raise ValueError(
+            f'Your training script should be a python script and not "{entry_point}"'
+        )
 
     print("Converting Arguments to Hyperparameters")
     hyperparameters = _convert_nargs_to_dict(args.training_script_args)
@@ -350,10 +462,15 @@ def sagemaker_launcher(sagemaker_config: SageMakerConfig, args):
     mixed_precision = args.mixed_precision.lower()
 
     if mixed_precision not in ["no", "fp16", "bf16"]:
-        raise ValueError(f"Unknown mixed_precision mode: {mixed_precision}. Choose between 'no', 'fp16' and 'bf16'.")
+        raise ValueError(
+            f"Unknown mixed_precision mode: {mixed_precision}. Choose between 'no', 'fp16' and 'bf16'."
+        )
 
     if args.fp16:
-        warnings.warn('--fp16 flag is deprecated. Use "--mixed_precision fp16" instead.', DeprecationWarning)
+        warnings.warn(
+            '--fp16 flag is deprecated. Use "--mixed_precision fp16" instead.',
+            DeprecationWarning,
+        )
         mixed_precision = "fp16"
 
     # Environment variables to be set for use during training job
@@ -380,21 +497,33 @@ def sagemaker_launcher(sagemaker_config: SageMakerConfig, args):
     )
 
     huggingface_estimator.fit()
-    print(f"You can find your model data at: {huggingface_estimator.model_data}")
+    print(
+        f"You can find your model data at: {huggingface_estimator.model_data}"
+    )
 
 
 def launch_command(args):
     # Sanity checks
     if sum([args.multi_gpu, args.tpu, args.use_deepspeed]) > 1:
-        raise ValueError("You can only pick one between `--multi_gpu`, `--use_deepspeed`, `--tpu`.")
+        raise ValueError(
+            "You can only pick one between `--multi_gpu`, `--use_deepspeed`, `--tpu`."
+        )
 
     defaults = None
     # Get the default from the config file.
-    if args.config_file is not None or os.path.isfile(default_config_file) and not args.cpu:
+    if (
+        args.config_file is not None
+        or os.path.isfile(default_config_file)
+        and not args.cpu
+    ):
         defaults = load_config_from_file(args.config_file)
         if not args.multi_gpu and not args.tpu and not args.use_deepspeed:
-            args.use_deepspeed = defaults.distributed_type == DistributedType.DEEPSPEED
-            args.multi_gpu = defaults.distributed_type == DistributedType.MULTI_GPU
+            args.use_deepspeed = (
+                defaults.distributed_type == DistributedType.DEEPSPEED
+            )
+            args.multi_gpu = (
+                defaults.distributed_type == DistributedType.MULTI_GPU
+            )
             args.tpu = defaults.distributed_type == DistributedType.TPU
         if defaults.compute_environment == ComputeEnvironment.LOCAL_MACHINE:
             # Update args with the defaults
@@ -407,7 +536,13 @@ def launch_command(args):
 
                 # Those args are handled separately
                 if (
-                    name not in ["compute_environment", "fp16", "mixed_precision", "distributed_type"]
+                    name
+                    not in [
+                        "compute_environment",
+                        "fp16",
+                        "mixed_precision",
+                        "distributed_type",
+                    ]
                     and getattr(args, name, None) is None
                 ):
                     setattr(args, name, attr)
@@ -428,7 +563,10 @@ def launch_command(args):
         multi_gpu_launcher(args)
     elif args.tpu and not args.cpu:
         tpu_launcher(args)
-    elif defaults is not None and defaults.compute_environment == ComputeEnvironment.AMAZON_SAGEMAKER:
+    elif (
+        defaults is not None
+        and defaults.compute_environment == ComputeEnvironment.AMAZON_SAGEMAKER
+    ):
         sagemaker_launcher(defaults, args)
     else:
         simple_launcher(args)
